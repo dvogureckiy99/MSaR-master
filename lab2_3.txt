@@ -1,0 +1,274 @@
+/*
+ * File:   main.c
+ * Author: Ogureckiy,Murashko
+ *
+ * Created on 13 февраля 2019 г., 9:58
+ * 
+ * Реализовано:
+ * 1. Написать программу, реализующую измерение напряжения на по-тенциометре и вывод значения на знакосинтезирующий дисплей в едини-цах АЦП (0...1023).
+ * 2.2. Модифицировать программу так, чтобы на дисплей выводились номер датчика на 
+ * первой строке и результат измерения на второй строке; переключение между датчиками осуществлять при нажатие на кнопку, подключенную к RA4.
+ * 3 дребезг исключен
+ * 4 Модифицировать программу таким образом, чтобы переключение между каналами осуществлялось с помощью потенциометра, при этом 
+ * по-тенциометр исключается из списка датчиков, результаты измерений с ко-торых выводятся на дисплей. 
+ * 5 При выполнении 
+ * данного задания необходи-мо исключить ситуации, при которых переключение каналов осуществля-ется самопроизвольно из-за «шумов», 
+ * присущих измерениям аналоговых сигналов.   Для этого реализовано скользящее среднее
+ * 
+ *Задачи:
+ *определить максимальное и минимальное показание с потенциометра в двух положениях   √
+ */
+ 
+#include <xc.h> //cannot find <alloca.h>
+#include <stdlib.h> //for itoa
+#include <stdint.h> //for uintxx_t
+#define _XTAL_FREQ 40000000
+
+// PIC18F4525 Configuration Bit Settings
+//настройка основных параметров работы микро
+// 'C' source line config statements
+
+// CONFIG1H
+#pragma config OSC = HSPLL      // Oscillator Selection bits (HS oscillator, PLL enabled (Clock Frequency = 4 x FOSC1))
+#pragma config FCMEN = OFF      // Fail-Safe Clock Monitor Enable bit (Fail-Safe Clock Monitor disabled)
+#pragma config IESO = OFF       // Internal/External Oscillator Switchover bit (Oscillator Switchover mode disabled)
+
+// CONFIG2L
+#pragma config PWRT = OFF       // Power-up Timer Enable bit (PWRT disabled)
+#pragma config BOREN = ON       // Brown-out Reset Enable bits (Brown-out Reset enabled and controlled by software (SBOREN is enabled))
+#pragma config BORV = 3         // Brown Out Reset Voltage bits (Minimum setting)
+
+// CONFIG2H
+#pragma config WDT = OFF        // Watchdog Timer Enable bit (WDT disabled (control is placed on the SWDTEN bit))
+#pragma config WDTPS = 32768    // Watchdog Timer Postscale Select bits (1:32768)
+
+// CONFIG3H
+#pragma config CCP2MX = PORTC   // CCP2 MUX bit (CCP2 input/output is multiplexed with RC1)
+#pragma config PBADEN = OFF     // PORTB A/D Enable bit (PORTB<4:0> pins are configured as digital I/O on Reset)
+#pragma config LPT1OSC = OFF    // Low-Power Timer1 Oscillator Enable bit (Timer1 configured for higher power operation)
+#pragma config MCLRE = ON       // MCLR Pin Enable bit (MCLR pin enabled; RE3 input pin disabled)
+
+// CONFIG4L
+#pragma config STVREN = ON      // Stack Full/Underflow Reset Enable bit (Stack full/underflow will cause Reset)
+#pragma config LVP = OFF        // Single-Supply ICSP Enable bit (Single-Supply ICSP disabled)
+#pragma config XINST = OFF      // Extended Instruction Set Enable bit (Instruction set extension and Indexed Addressing mode disabled (Legacy mode))
+
+// CONFIG5L
+#pragma config CP0 = OFF        // Code Protection bit (Block 0 (000800-003FFFh) not code-protected)
+#pragma config CP1 = OFF        // Code Protection bit (Block 1 (004000-007FFFh) not code-protected)
+#pragma config CP2 = OFF        // Code Protection bit (Block 2 (008000-00BFFFh) not code-protected)
+
+// CONFIG5H
+#pragma config CPB = OFF        // Boot Block Code Protection bit (Boot block (000000-0007FFh) not code-protected)
+#pragma config CPD = OFF        // Data EEPROM Code Protection bit (Data EEPROM not code-protected)
+
+// CONFIG6L
+#pragma config WRT0 = OFF       // Write Protection bit (Block 0 (000800-003FFFh) not write-protected)
+#pragma config WRT1 = OFF       // Write Protection bit (Block 1 (004000-007FFFh) not write-protected)
+#pragma config WRT2 = OFF       // Write Protection bit (Block 2 (008000-00BFFFh) not write-protected)
+
+// CONFIG6H
+#pragma config WRTC = OFF       // Configuration Register Write Protection bit (Configuration registers (300000-3000FFh) not write-protected)
+#pragma config WRTB = OFF       // Boot Block Write Protection bit (Boot Block (000000-0007FFh) not write-protected)
+#pragma config WRTD = OFF       // Data EEPROM Write Protection bit (Data EEPROM not write-protected)
+
+// CONFIG7L
+#pragma config EBTR0 = OFF      // Table Read Protection bit (Block 0 (000800-003FFFh) not protected from table reads executed in other blocks)
+#pragma config EBTR1 = OFF      // Table Read Protection bit (Block 1 (004000-007FFFh) not protected from table reads executed in other blocks)
+#pragma config EBTR2 = OFF      // Table Read Protection bit (Block 2 (008000-00BFFFh) not protected from table reads executed in other blocks)
+
+// CONFIG7H
+#pragma config EBTRB = OFF      // Boot Block Table Read Protection bit (Boot Block (000000-0007FFh) not protected from table reads executed in other blocks)
+
+// #pragma config statements should precede project file includes.
+// Use project enums instead of #define for ON and OFF.
+
+
+
+//для дисплея
+#define lcd_clear() lcd_command(1)
+#define lcd_origin() lcd_command(2)
+#ifndef _XTAL_FREQ
+#define _XTAL_FREQ 40000000 // определение тактовой частоты  40 МГц  для функции __delay_ms
+#endif
+#define E_pulse_with 50 //длительность тактовых импульсов LCD в мкс
+#define LCD_E PORTDbits.RD3
+#define LCD_RS PORTDbits.RD2
+#define LCD_Data4 LATD // инициализация портов D4-D7 LCD
+
+
+void Adc_init();
+int read_Adc(int pin);
+void lcd_clk(void) /*генерация импульса на вход EN*/
+{
+  LCD_E = 1; 
+  __delay_us(E_pulse_with);
+  LCD_E = 0;
+  __delay_us(E_pulse_with);
+}
+void lcd_command(unsigned char outbyte) /*отправить команду (4-битный ре-жим работы) */
+{
+  LCD_RS=0; //режим передачи команды
+  LCD_Data4=(LCD_Data4&0x0f)|(outbyte&0xf0); // отправка старших четырех бит 
+  lcd_clk();
+  LCD_Data4=(LCD_Data4&0x0f)|((outbyte<<4)&0xf0); // отправка младших че-тырех бит
+  lcd_clk();
+  __delay_ms(1);
+}
+void lcd_putc(char outbyte) /* отправить данные (4-битная операция) */
+{
+  LCD_RS=1; //режим передачи данных 
+  LCD_Data4=(LCD_Data4&0x0f)|(outbyte&0xf0);
+  lcd_clk();
+  LCD_Data4=(LCD_Data4&0x0f)|((outbyte<<4)&0xf0);
+  lcd_clk();
+}
+void lcd_puts(unsigned char line,const char *p) // *вывод строки на экран*
+{
+    /*line - начальная позиция строки*/
+	lcd_origin();         // переход к нулевому адресу LCD
+	lcd_command(line);			// установить адрес LCD 00H почему 00H*?
+	while(*p)                  // проверить, равен ли указатель 0
+	{
+	 lcd_putc(*p);             // отправить данные на LCD
+	 p++;                      // увеличить адрес на 1
+	}
+}
+void inttolcd(unsigned char posi, long value) //вывод на экран значений пере-менных
+{ /*posi - начальная  позиция числа*/
+	char buff[16];
+	itoa(buff,value,10);
+	lcd_puts(posi,buff);
+}
+void lcd_init() // инициализация LCD-дисплея
+{
+  TRISD &= 0x03;// перевод выводов RD4-RD7в режим выходов
+//здесь разве не RD2-RD7 ?
+  LCD_Data4 &= 0b00001111;//установка нулей на линии передачи данных
+  LCD_E=0;
+  LCD_RS=0;
+  __delay_ms(1);
+/*инициализация дисплея*/
+  LCD_Data4=(LCD_Data4&0x0f)|0x30;
+  lcd_clk();
+ __delay_ms(1);
+  LCD_Data4=(LCD_Data4&0x0f)|0x30;
+ lcd_clk();
+__delay_ms(1);
+  LCD_Data4=(LCD_Data4&0x0f)|0x30;
+  lcd_clk();
+  __delay_ms(1);
+/*---------------------------------*/
+  LCD_Data4=(LCD_Data4&0x0f)|0x20;	// переключить на 4-битный режим пе-ре-дачи
+  lcd_clk();
+  __delay_ms(1);
+  lcd_command(0x28);//установить N=1, F=0 (две строки, размер символа 5*8 точек
+  lcd_command(0x01);	// очистить всё
+  lcd_command(0x06);	// автоматически передвинуть курсор после байта
+  lcd_command(0x0C);	// дисплей включён, курсора нет, не моргает
+  lcd_command(0x02);	// начальная позиция
+  lcd_command(0x01);	// очистить всё снова
+}
+
+            
+void main(void) 
+{
+    
+    #define POTENTOMETER 7 //0-12
+    #define P_MAX_VALUE 1023 //max показание потенциометра в отн.ед. (0-1023)
+    #define P_MIN_VALUE 0 //мин показание потенциометра в отн.ед. (0-1023)
+    #define SENSOR_MAX 6 //номер максимального    датчика  
+    #define SENSOR_MIN 0 
+    char sensor_number = 0 ; //номер пина с сенсором (1-12)
+    long sensor_value = 0 ; //значение считываемое с сенсора
+    long step = (P_MAX_VALUE-P_MIN_VALUE); //шаг (ширина интервала), приходящийся(аяся) на 1 сенсор 
+    step /= sensor_count ; 
+     
+    lcd_init();
+    Adc_init();
+    
+    //Для реализации скользящего среднего
+    #define NumReadings  10               //(ширина окна усреднения) Использование константы вместо переменной позволяет задать размер для массива.
+    int numReadings = NumReadings;
+    uint16_t readings[NumReadings];      // данные, считанные с входного аналогового контакта
+    uint8_t index = 0;                          // индекс для значения, которое считывается в данный момент
+    uint16_t total = 0;                  // суммарное значение
+        
+    // инициализация массива окна усредения (инициализируем первые значений кроме последнего для того , чтобы выводилась корректная температура)
+   //------------------------------------------------
+  while ( index < (numReadings-1))
+  {
+    readings[index] =  read_Adc(POTENTOMETER);
+    total= total + readings[index];  
+    index ++;
+  }
+  readings[index]=0; // значение последенго показания равно 0
+  //так как в основном алгоритме мы вычитаем самое раннее значения из окна усреднения
+  //---------------------------------------------------
+  
+    while(1)
+    {      
+        
+        //----усредение----------------------
+        total= total - readings[index]; // вычитаем самое раннее значения из окна усреднения
+        readings[index] = read_Adc(POTENTOMETER); //считывание показания 
+        // добавляем его к общей сумме:
+        total= total + readings[index];      
+        // продвигаемся к следующему значению в массиве:  
+        index ++;                    
+        // если мы в конце массива...
+        if (index >= numReadings)              
+          // ...возвращаемся к началу:
+          index = 0;                          
+        // вычисляем среднее значение:
+        sensor_value = total / numReadings;
+        //----------------------------------------
+        
+        //------определение номера сенсора по показанием потенциометра-----
+        sensor_value = (sensor_value-P_MIN_VALUE) ;//эквивалентные показания потенциометра (грубо:переносим начало координат вправо) 
+        //получаем в конце цикла текущее значение sensor_num (номера сенсора)
+        for(sensor_number = SENSOR_MIN ;sensor_number<SENSOR_MAX;sensor_number++)
+        {
+            if(((sensor_number-1)*step<=sensor_value )&&(sensor_value<=sensor_number*step)) {break;}
+        }
+        //-----------------------------------------------------------------
+        
+        #define CLEAR 1000
+        long counter  =0 ;
+    
+        counter++;
+        if(counter>=CLEAR) //обновление экрана (с задержкой)
+        {
+          lcd_clear();
+          lcd_puts(0x0,"sensor N"); //с начала строки 
+          inttolcd(0x88,sensor_number); 
+          inttolcd(0xc0,sensor_value); //новая строка
+          counter = 0;
+        }
+    }
+}
+ 
+
+void Adc_init()
+{
+    //запуск АЦП
+    TRISA|=0b00101111; //перевод выводов RA0, RA1, RA2, RA3, RA5 в режим входов
+    TRISE|=0b00000111; //перевод выводов RE0, RE1, RE2 в режим входов
+    ADCON1bits.PCFG=0b0111; // конфигурация аналого-цифровых портов
+    ADCON1bits.VCFG=0b00; // опорное напряжение Vss Vdd
+    ADCON2bits.ACQT=0b111;// время преобразования 20 Tad
+    ADCON2bits.ADCS=0b110;// частота преобразования Fosc/64
+    ADCON2bits.ADFM=0;//левое смещение
+    ADCON0bits.ADON=1;   // модуль АЦП включен
+ }
+int read_Adc(int pin)
+{
+    /*
+     прочитать pin (0-12 channel)
+     возвращает значение 10 битное
+     */
+    ADCON0bits.CHS=pin; // выбор аналогового канала
+    ADCON0bits.GO_DONE=1; // запуск преобразования
+    while(ADCON0bits.GO_DONE==1);      
+    return (ADRESH<<2)+(ADRESL>>6);//запись результата преобразования
+}

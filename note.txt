@@ -1,0 +1,14 @@
+// Начало
+//  
+
+//быстрая настройка битов
+#define INPUT 1
+#define OUTPUT 0
+
+void pinmode(   name, int state)
+{
+    #define new_name name 
+    if(name[1]=='C') TRISCbits.new_name = state ;
+    if(name[1]=='B') TRISBbits.new_name = state ;
+    if(name[1]=='A') TRISAbits.new_name = state ;
+}
